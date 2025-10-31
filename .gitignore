@@ -1,0 +1,16 @@
+venv/
+
+pycache/
+*.pyc
+*.pyo
+*.pyd
+*.h5
+*.dll
+*.pkl
+*.log
+.env
+.DS_Store
+.vscode/
+.idea/
+temp_images/
+
