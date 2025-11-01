@@ -1,16 +1,35 @@
+# Entornos virtuales de Python
 venv/
+.env
 
-pycache/
+# Archivos compilados o de caché
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pkl
 *.h5
 *.dll
-*.pkl
 *.log
-.env
+
+# Archivos del sistema y temporales
 .DS_Store
-.vscode/
-.idea/
+Thumbs.db
 temp_images/
 
+# Configuración de editores
+.vscode/
+.idea/
+
+# Carpetas de build (CMake, Flutter, etc.)
+/build/
+/app/build/
+/linux/build/
+/windows/build/
+/macos/build/
+
+# Flutter generados
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+pubspec.lock
