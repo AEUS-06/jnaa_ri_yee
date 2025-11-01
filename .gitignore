@@ -27,6 +27,7 @@ temp_images/
 /linux/build/
 /windows/build/
 /macos/build/
+android/.kotlin/
 
 # Flutter generados
 .flutter-plugins

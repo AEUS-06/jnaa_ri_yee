@@ -1,0 +1,843 @@
+import 'package:flutter/material.dart';
+import 'routers/app_routers.dart';
+
+void main() {
+  runApp(const SignTranslateApp());
+}
+
+class SignTranslateApp extends StatelessWidget {
+  const SignTranslateApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Traductor de Señas',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData.dark(),
+      initialRoute: AppRoutes.initialRoute,
+      routes: AppRoutes.getRoutes(),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+
+class NeonNavbar extends StatefulWidget {
+  final int currentIndex;
+  final Function(int) onItemSelected;
+
+  const NeonNavbar({
+    super.key,
+    required this.currentIndex,
+    required this.onItemSelected,
+  });
+
+  @override
+  State<NeonNavbar> createState() => _NeonNavbarState();
+}
+
+class _NeonNavbarState extends State<NeonNavbar>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  final List<IconData> _icons = [
+    Icons.home_rounded,
+    Icons.camera_alt_rounded,
+    Icons.info_rounded,
+  ];
+
+  double _indicatorPosition = 0.0;
+  bool _isDragging = false;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller =
+        AnimationController(vsync: this, duration: const Duration(seconds: 2))
+          ..repeat(reverse: true);
+
+    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+
+    // Inicializamos la posición del indicador según la página actual
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() {
+        _indicatorPosition = widget.currentIndex.toDouble();
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (_, __) {
+        final glow = 8 + 6 * _controller.value;
+
+        return GestureDetector(
+          onHorizontalDragUpdate: (details) {
+            // Permite mover indicador con el dedo
+            setState(() {
+              _isDragging = true;
+              final box = context.findRenderObject() as RenderBox;
+              double dx = details.localPosition.dx.clamp(0, box.size.width);
+              double segmentWidth = box.size.width / _icons.length;
+              _indicatorPosition = dx / segmentWidth;
+            });
+          },
+          onHorizontalDragEnd: (_) {
+            // Al soltar, redondeamos al índice más cercano
+            setState(() {
+              _isDragging = false;
+              final index = _indicatorPosition.round();
+              _indicatorPosition = index.toDouble();
+              widget.onItemSelected(index);
+            });
+          },
+          child: Container(
+            height: 70,
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.3),
+              borderRadius: BorderRadius.circular(40),
+              border: Border.all(color: Colors.blueAccent.withOpacity(0.8), width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.blueAccent.withOpacity(0.6),
+                  blurRadius: glow,
+                  spreadRadius: 1,
+                ),
+              ],
+            ),
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                // Indicador circular animado
+                LayoutBuilder(builder: (context, constraints) {
+                  double segmentWidth = constraints.maxWidth / _icons.length;
+                  double left = segmentWidth * _indicatorPosition + segmentWidth/2 - 18;
+
+                  return AnimatedPositioned(
+                    duration: _isDragging ? Duration.zero : const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    left: left,
+                    top: 7,
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: Colors.blueAccent.withOpacity(0.4),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blueAccent.withOpacity(0.7),
+                            blurRadius: glow,
+                            spreadRadius: 2,
+                          )
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                // Iconos
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: List.generate(_icons.length, (index) {
+                    final isSelected = widget.currentIndex == index;
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _indicatorPosition = index.toDouble();
+                        });
+                        widget.onItemSelected(index);
+                      },
+                      child: Icon(
+                        _icons[index],
+                        color: isSelected
+                            ? Colors.blueAccent
+                            : Colors.blueAccent.withOpacity(0.5),
+                        size: isSelected ? 30 : 26,
+                      ),
+                    );
+                  }),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+}
+import 'dart:math';
+import 'package:flutter/material.dart';
+
+class AnimatedBackground extends StatefulWidget {
+  const AnimatedBackground({super.key});
+
+  @override
+  State<AnimatedBackground> createState() => _AnimatedBackgroundState();
+}
+
+class _AnimatedBackgroundState extends State<AnimatedBackground>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  final List<_Particle> _particles = [];
+  final Random _random = Random();
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 20),
+    )..repeat();
+
+    // Crear partículas
+    for (int i = 0; i < 120; i++) {
+      _particles.add(
+        _Particle(
+          position: Offset(_random.nextDouble(), _random.nextDouble()),
+          color: _randomBlueColor(_random),
+          speed: 0.5 + _random.nextDouble() * 1.0,
+          size: 2 + _random.nextDouble() * 3,
+        ),
+      );
+    }
+  }
+
+  Color _randomBlueColor(Random random) {
+    final hue = 200 + random.nextInt(60); // azul-cian
+    final saturation = 0.7 + random.nextDouble() * 0.3;
+    final lightness = 0.4 + random.nextDouble() * 0.3;
+    return HSLColor.fromAHSL(1.0, hue.toDouble(), saturation, lightness)
+        .toColor();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (_, __) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              // Fondo negro
+              Container(color: Colors.black),
+              // Partículas dibujadas encima
+              CustomPaint(
+                foregroundPainter:
+                    _ParticlePainter(_particles, _controller.value),
+                child: const SizedBox.expand(),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+}
+
+class _Particle {
+  final Offset position; // valores relativos 0..1
+  final Color color;
+  final double speed;
+  final double size;
+
+  _Particle({
+    required this.position,
+    required this.color,
+    required this.speed,
+    required this.size,
+  });
+}
+
+class _ParticlePainter extends CustomPainter {
+  final List<_Particle> particles;
+  final double progress;
+
+  _ParticlePainter(this.particles, this.progress);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6.0)
+      ..blendMode = BlendMode.plus;
+
+    for (final p in particles) {
+      final dx = (p.position.dx * size.width) +
+          40 * sin(progress * 2 * pi * p.speed + p.position.dy * 2 * pi);
+      final dy = (p.position.dy * size.height) +
+          40 * cos(progress * 2 * pi * p.speed + p.position.dx * 2 * pi);
+
+      final oscill = sin(progress * 2 * pi * p.speed);
+      final scale = 1.0 + 0.35 * oscill;
+      final opacity = (0.5 + 0.5 * (oscill * 0.6 + 0.4)).clamp(0.4, 1.0);
+
+      paint.color = p.color.withOpacity(opacity);
+      canvas.drawCircle(Offset(dx, dy), p.size * scale, paint);
+
+      // Núcleo brillante
+      final Paint core = Paint()
+        ..color = p.color.withOpacity((opacity + 0.8).clamp(0.6, 1.0))
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(Offset(dx, dy), (p.size * 0.5) * scale, core);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ParticlePainter oldDelegate) => true;
+}
+import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../widgets/animated_background.dart';
+
+class InfoScreen extends StatelessWidget {
+  const InfoScreen({super.key});
+
+  // Método para abrir enlaces externos
+  Future<void> _launchUrl(String url) async {
+    final Uri uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw Exception('No se pudo abrir $url');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        const AnimatedBackground(),
+        Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 40.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'Jñaa Ri Yee',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 38,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.5,
+                    shadows: [
+                      Shadow(color: Colors.blueAccent, blurRadius: 10),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Una aplicación que busca traducir el lenguaje de señas mediante visión por computadora para mejorar la comunicación entre personas sordas y oyentes.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 18,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 50),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Integrantes',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      _buildMemberCard(
+                        context,
+                        name: 'Anahi Figueroa Gonzalez',
+                        linkedIn: 'https://www.linkedin.com/in/anahi-figueroa-gonzalez-2a4a3438b?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app',
+                        github: 'https://github.com/Ann8ix',
+                        onLaunch: _launchUrl,
+                      ),
+                      _buildMemberCard(
+                        context,
+                        name: 'Lilybet Pedral Hernández',
+                        linkedIn: 'proximamente',
+                        github: 'proximamente',
+                        onLaunch: _launchUrl,
+                      ),
+                      _buildMemberCard(
+                        context,
+                        name: 'Axel Eduardo Urbina Secundino',
+                        linkedIn: 'https://www.linkedin.com/in/axel-eduardo-u-8124a837b?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app',
+                        github: 'https://github.com/AEUS-06?tab=overview&from=2025-10-01&to=2025-10-22',
+                        onLaunch: _launchUrl,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Widget _buildMemberCard(
+    BuildContext context, {
+    required String name,
+    required String linkedIn,
+    required String github,
+    required Function(String) onLaunch,
+  }) {
+    final bool hasLinks = linkedIn != 'proximamente' && github != 'proximamente';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      child: Card(
+        color: Colors.white.withOpacity(0.1),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 8,
+        child: ListTile(
+          leading: const Icon(Icons.person, color: Colors.white, size: 36),
+          title: Text(
+            name,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          subtitle: hasLinks
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 6),
+                    GestureDetector(
+                      onTap: () => onLaunch(linkedIn),
+                      child: const Text(
+                        'LinkedIn',
+                        style: TextStyle(
+                          color: Colors.lightBlueAccent,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => onLaunch(github),
+                      child: const Text(
+                        'GitHub',
+                        style: TextStyle(
+                          color: Colors.greenAccent,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : const Text(
+                  'Enlaces próximamente disponibles',
+                  style: TextStyle(color: Colors.white54, fontSize: 14),
+                ),
+          trailing: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 20),
+        ),
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import '../widgets/animated_background.dart';
+import '../widgets/neon_navbar.dart';
+import 'camera_screen.dart';
+import 'info_screen.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _selectedIndex = 0;
+
+  final List<Widget> _screens = const [
+    Center(child: SizedBox.shrink()), // Home se construye dinámicamente
+    CameraScreen(),
+    InfoScreen(),
+  ];
+
+  void _onNavItemSelected(int index) {
+    setState(() {
+      _selectedIndex = index;
+    });
+  }
+
+  void _showMeaningDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black54, // Fondo semi-transparente
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Significado de jñ\'a ri y\'ë\'ë',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 24,
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                '• jñ\'a: hablar\n• ri: tiempo presente\n• y\'ë\'ë: mano\n\n'
+                'Interpretación completa: "La mano que habla"',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                  height: 1.5,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(fontSize: 16),
+                ),
+                child: const Text('Cerrar'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final homeContent = Center(
+      child: GestureDetector(
+        onTap: _showMeaningDialog,
+        child: const Text(
+          "jñ'a ri y'ë'ë",
+          style: TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+            letterSpacing: 2,
+          ),
+        ),
+      ),
+    );
+
+    return Scaffold(
+      body: Stack(
+        children: [
+          const AnimatedBackground(),
+          IndexedStack(
+            index: _selectedIndex,
+            children: [
+              homeContent,
+              ..._screens.sublist(1),
+            ],
+          ),
+        ],
+      ),
+      bottomNavigationBar: NeonNavbar(
+        currentIndex: _selectedIndex,
+        onItemSelected: _onNavItemSelected,
+      ),
+    );
+  }
+}
+import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:camera/camera.dart';
+import 'package:http/http.dart' as http;
+import '../widgets/animated_background.dart';
+
+class CameraScreen extends StatefulWidget {
+  const CameraScreen({super.key});
+
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> {
+  CameraController? _controller;
+  Future<void>? _initializeControllerFuture;
+  bool _cameraVisible = false;
+  String predictionText = "";
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  // Inicializa la cámara
+  Future<void> _initCamera() async {
+    final cameras = await availableCameras();
+    final firstCamera = cameras.first;
+
+    _controller = CameraController(
+      firstCamera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+
+    _initializeControllerFuture = _controller!.initialize();
+    setState(() => _cameraVisible = true);
+
+    // Inicia el loop de predicción
+    startPredictionLoop();
+  }
+
+  // Loop para capturar frames y enviar al backend
+  void startPredictionLoop() async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+
+    while (_cameraVisible) {
+      try {
+        final picture = await _controller!.takePicture();
+        await sendFrame(File(picture.path));
+        await Future.delayed(const Duration(milliseconds: 500)); // Ajusta velocidad
+      } catch (e) {
+        print("Error capturando frame: $e");
+      }
+    }
+  }
+
+  // Envía un frame al backend FastAPI
+  Future<void> sendFrame(File file) async {
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('http://10.0.2.2:8000/predict/'), // Cambiar según red/emulador
+      );
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      var response = await request.send();
+      var respStr = await response.stream.bytesToString();
+      var jsonResp = json.decode(respStr);
+
+      if (mounted) {
+        setState(() {
+          predictionText = "Predicción: ${jsonResp['prediction']}";
+        });
+      }
+    } catch (e) {
+      print("Error enviando frame: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        const AnimatedBackground(),
+        Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'Traducción de Lenguaje de Señas',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Presiona el botón para activar la cámara y comenzar la detección en tiempo real.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 16,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 30),
+
+                // Botón para abrir cámara
+                if (!_cameraVisible)
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white.withOpacity(0.15),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 30,
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(25),
+                      ),
+                      elevation: 8,
+                    ),
+                    icon: const Icon(Icons.camera_alt_outlined, size: 26),
+                    label: const Text(
+                      'Abrir Cámara',
+                      style: TextStyle(fontSize: 18),
+                    ),
+                    onPressed: _initCamera,
+                  ),
+
+                // Vista previa de la cámara con predicción
+                if (_cameraVisible) ...[
+                  const SizedBox(height: 25),
+                  FutureBuilder(
+                    future: _initializeControllerFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.done) {
+                        return Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(20),
+                              child: AspectRatio(
+                                aspectRatio: _controller!.value.aspectRatio,
+                                child: CameraPreview(_controller!),
+                              ),
+                            ),
+                            Positioned(
+                              bottom: 15,
+                              left: 15,
+                              child: Container(
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  predictionText,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 22),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      } else {
+                        return const Padding(
+                          padding: EdgeInsets.all(20),
+                          child: CircularProgressIndicator(color: Colors.white),
+                        );
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'La cámara está activa.\nApunta las manos dentro del marco para detectar las señas.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import '../screens/home_screen.dart';
+import '../screens/camera_screen.dart';
+import '../screens/info_screen.dart';
+
+class AppRoutes {
+  static const initialRoute = '/home';
+
+  static Map<String, WidgetBuilder> getRoutes() {
+    return {
+      '/home': (context) => const HomeScreen(),
+      '/camera': (context) => const CameraScreen(),
+      '/info': (context) => const InfoScreen(),
+    };
+  }
+}
+import 'dart:convert';
+import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+
+class ApiService {
+  static const String _baseUrl = 'http://192.168.0.17:8000'; // Cambia según tu red
+
+  /// Envía una imagen al backend y obtiene la predicción
+  static Future<String?> sendImage(File imageFile) async {
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/predict/'),
+      );
+      request.files.add(
+        await http.MultipartFile.fromPath('file', imageFile.path),
+      );
+
+      var response = await request.send();
+      var responseBody = await response.stream.bytesToString();
+
+      if (response.statusCode == 200) {
+        var data = jsonDecode(responseBody);
+        return data['prediction'];
+      } else {
+        print('Error: ${response.statusCode}');
+        print('Respuesta: $responseBody');
+        return null;
+      }
+    } catch (e) {
+      print('Error al enviar la imagen: $e');
+      return null;
+    }
+  }
+
+  /// Guarda una imagen temporal (por ejemplo, desde la cámara)
+  static Future<File> saveTempImage(List<int> bytes) async {
+    final dir = await getTemporaryDirectory();
+    final file = File('${dir.path}/frame.jpg');
+    await file.writeAsBytes(bytes);
+    return file;
+  }
+}
