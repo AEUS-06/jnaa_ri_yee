@@ -17,28 +17,37 @@ class NeonNavbar extends StatefulWidget {
 class _NeonNavbarState extends State<NeonNavbar>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
+  late Animation<double> _glowAnimation;
+  late Animation<Color?> _colorAnimation;
 
-  final List<IconData> _icons = [
-    Icons.home_rounded,
-    Icons.camera_alt_rounded,
-    Icons.info_rounded,
+  final List<NavItem> _navItems = [
+    NavItem(icon: Icons.home_rounded, label: 'Inicio'),
+    NavItem(icon: Icons.camera_alt_rounded, label: 'Cámara'),
+    NavItem(icon: Icons.info_rounded, label: 'Info'),
   ];
 
   double _indicatorPosition = 0.0;
   bool _isDragging = false;
-  late Animation<double> _animation;
 
   @override
   void initState() {
     super.initState();
 
-    _controller =
-        AnimationController(vsync: this, duration: const Duration(seconds: 2))
-          ..repeat(reverse: true);
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
 
-    _animation = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    _glowAnimation = Tween<double>(begin: 8.0, end: 15.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
 
-    // Inicializamos la posición del indicador según la página actual
+    _colorAnimation = ColorTween(
+      begin: Colors.blueAccent.withOpacity(0.7),
+      end: Colors.cyanAccent.withOpacity(0.9),
+    ).animate(_controller);
+
+    // Inicializar posición del indicador
     WidgetsBinding.instance.addPostFrameCallback((_) {
       setState(() {
         _indicatorPosition = widget.currentIndex.toDouble();
@@ -50,102 +59,131 @@ class _NeonNavbarState extends State<NeonNavbar>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _controller,
-      builder: (_, __) {
-        final glow = 8 + 6 * _controller.value;
-
-        return GestureDetector(
-          onHorizontalDragUpdate: (details) {
-            // Permite mover indicador con el dedo
-            setState(() {
-              _isDragging = true;
-              final box = context.findRenderObject() as RenderBox;
-              double dx = details.localPosition.dx.clamp(0, box.size.width);
-              double segmentWidth = box.size.width / _icons.length;
-              _indicatorPosition = dx / segmentWidth;
-            });
-          },
-          onHorizontalDragEnd: (_) {
-            // Al soltar, redondeamos al índice más cercano
-            setState(() {
-              _isDragging = false;
-              final index = _indicatorPosition.round();
-              _indicatorPosition = index.toDouble();
-              widget.onItemSelected(index);
-            });
-          },
-          child: Container(
-            height: 70,
-            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(40),
-              border: Border.all(color: Colors.blueAccent.withOpacity(0.8), width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.blueAccent.withOpacity(0.6),
-                  blurRadius: glow,
-                  spreadRadius: 1,
-                ),
+      builder: (context, child) {
+        return Container(
+          height: 80,
+          margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.black.withOpacity(0.8),
+                Colors.black.withOpacity(0.6),
               ],
             ),
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                // Indicador circular animado
-                LayoutBuilder(builder: (context, constraints) {
-                  double segmentWidth = constraints.maxWidth / _icons.length;
-                  double left = segmentWidth * _indicatorPosition + segmentWidth/2 - 18;
+            borderRadius: BorderRadius.circular(40),
+            border: Border.all(
+              color: _colorAnimation.value!,
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _colorAnimation.value!.withOpacity(0.6),
+                blurRadius: _glowAnimation.value,
+                spreadRadius: 1,
+              ),
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 10,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              // Indicador deslizante
+              LayoutBuilder(builder: (context, constraints) {
+                final segmentWidth = constraints.maxWidth / _navItems.length;
+                final left = segmentWidth * _indicatorPosition + segmentWidth / 2 - 25;
 
-                  return AnimatedPositioned(
-                    duration: _isDragging ? Duration.zero : const Duration(milliseconds: 300),
-                    curve: Curves.easeInOut,
-                    left: left,
-                    top: 7,
-                    child: Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: Colors.blueAccent.withOpacity(0.4),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.blueAccent.withOpacity(0.7),
-                            blurRadius: glow,
-                            spreadRadius: 2,
-                          )
+                return AnimatedPositioned(
+                  duration: _isDragging 
+                      ? Duration.zero 
+                      : const Duration(milliseconds: 400),
+                  curve: Curves.elasticOut,
+                  left: left,
+                  top: 10,
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          _colorAnimation.value!,
+                          Colors.blueAccent.withOpacity(0.8),
                         ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: _colorAnimation.value!.withOpacity(0.8),
+                          blurRadius: _glowAnimation.value * 1.5,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _navItems[widget.currentIndex].icon,
+                      color: Colors.white,
+                      size: 24,
+                    ),
+                  ),
+                );
+              }),
+
+              // Items de navegación
+              Row(
+                children: List.generate(_navItems.length, (index) {
+                  final isSelected = widget.currentIndex == index;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: () => _onItemTapped(index),
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        height: double.infinity,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _navItems[index].icon,
+                              color: isSelected 
+                                  ? Colors.white 
+                                  : Colors.blueAccent.withOpacity(0.5),
+                              size: isSelected ? 28 : 24,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _navItems[index].label,
+                              style: TextStyle(
+                                color: isSelected 
+                                    ? Colors.white 
+                                    : Colors.blueAccent.withOpacity(0.7),
+                                fontSize: isSelected ? 12 : 10,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   );
                 }),
-                // Iconos
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: List.generate(_icons.length, (index) {
-                    final isSelected = widget.currentIndex == index;
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _indicatorPosition = index.toDouble();
-                        });
-                        widget.onItemSelected(index);
-                      },
-                      child: Icon(
-                        _icons[index],
-                        color: isSelected
-                            ? Colors.blueAccent
-                            : Colors.blueAccent.withOpacity(0.5),
-                        size: isSelected ? 30 : 26,
-                      ),
-                    );
-                  }),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
     );
+  }
+
+  void _onItemTapped(int index) {
+    setState(() {
+      _indicatorPosition = index.toDouble();
+    });
+    widget.onItemSelected(index);
   }
 
   @override
@@ -153,4 +191,11 @@ class _NeonNavbarState extends State<NeonNavbar>
     _controller.dispose();
     super.dispose();
   }
+}
+
+class NavItem {
+  final IconData icon;
+  final String label;
+
+  NavItem({required this.icon, required this.label});
 }

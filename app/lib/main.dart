@@ -11,9 +11,15 @@ class SignTranslateApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Traductor de Señas',
+      title: 'Jñaa Ri Yee - Traductor de Señas',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.transparent,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+      ),
       initialRoute: AppRoutes.initialRoute,
       routes: AppRoutes.getRoutes(),
     );

@@ -1,189 +1,106 @@
-import tensorflow as tf
-from tensorflow.keras import layers, models, regularizers
-from tensorflow.keras.applications import MobileNetV2, EfficientNetB0
+# model/model.py
+import os
+import json
 import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.preprocessing import image as kimage
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from PIL import Image
+import io
+import joblib
 
-class SignLanguageModel:
-    def __init__(self, input_shape=(224, 224, 3), num_classes=26, model_type='cnn'):
+class DLClassifier:
+    """Deep learning classifier using MobileNetV2 base + head."""
+    def __init__(self, model_path=None, input_shape=(224,224,3)):
         self.input_shape = input_shape
-        self.num_classes = num_classes
-        self.model_type = model_type
         self.model = None
-    
-    def build_cnn_model(self):
-        """Modelo CNN personalizado para lenguaje de señas"""
-        model = models.Sequential([
-            # Capa de entrada
-            layers.Input(shape=self.input_shape),
-            
-            # Primer bloque convolucional
-            layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
-            
-            # Segundo bloque convolucional
-            layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
-            
-            # Tercer bloque convolucional
-            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
-            
-            # Cuarto bloque convolucional
-            layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.25),
-            
-            # Capas fully connected
-            layers.Flatten(),
-            layers.Dense(512, activation='relu', 
-                        kernel_regularizer=regularizers.l2(0.001)),
-            layers.BatchNormalization(),
-            layers.Dropout(0.5),
-            layers.Dense(256, activation='relu',
-                        kernel_regularizer=regularizers.l2(0.001)),
-            layers.BatchNormalization(),
-            layers.Dropout(0.5),
-            layers.Dense(self.num_classes, activation='softmax')
-        ])
-        
+        if model_path:
+            self.load(model_path)
+
+    def build(self, num_classes, base_trainable=False):
+        base = MobileNetV2(weights='imagenet', include_top=False, input_shape=self.input_shape)
+        base.trainable = base_trainable
+        x = base.output
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dense(256, activation='relu')(x)
+        x = layers.Dropout(0.4)(x)
+        out = layers.Dense(num_classes, activation='softmax')(x)
+        model = models.Model(inputs=base.input, outputs=out)
+        model.compile(optimizer=tf.keras.optimizers.Adam(1e-4),
+                      loss='categorical_crossentropy',
+                      metrics=['accuracy'])
+        self.model = model
+        self._base = base
         return model
-    
-    def build_transfer_learning_model(self):
-        """Modelo con Transfer Learning usando MobileNetV2"""
-        base_model = MobileNetV2(
-            weights='imagenet',
-            include_top=False,
-            input_shape=self.input_shape
-        )
-        
-        # Congelar las capas base
-        base_model.trainable = False
-        
-        model = models.Sequential([
-            base_model,
-            layers.GlobalAveragePooling2D(),
-            layers.Dense(512, activation='relu'),
-            layers.BatchNormalization(),
-            layers.Dropout(0.5),
-            layers.Dense(256, activation='relu'),
-            layers.BatchNormalization(),
-            layers.Dropout(0.3),
-            layers.Dense(self.num_classes, activation='softmax')
-        ])
-        
-        return model
-    
-    def build_efficientnet_model(self):
-        """Modelo con EfficientNet (más preciso pero más lento)"""
-        base_model = EfficientNetB0(
-            weights='imagenet',
-            include_top=False,
-            input_shape=self.input_shape
-        )
-        
-        base_model.trainable = False
-        
-        model = models.Sequential([
-            base_model,
-            layers.GlobalAveragePooling2D(),
-            layers.Dense(512, activation='relu'),
-            layers.BatchNormalization(),
-            layers.Dropout(0.5),
-            layers.Dense(self.num_classes, activation='softmax')
-        ])
-        
-        return model
-    
-    def build_model(self):
-        """Construir el modelo según el tipo especificado"""
-        if self.model_type == 'transfer_learning':
-            return self.build_transfer_learning_model()
-        elif self.model_type == 'efficientnet':
-            return self.build_efficientnet_model()
-        else:  # CNN por defecto
-            return self.build_cnn_model()
-    
-    def compile_model(self, learning_rate=0.001):
-        """Compilar el modelo"""
+
+    def load(self, model_path):
+        self.model = tf.keras.models.load_model(model_path)
+        return self.model
+
+    def predict_proba(self, np_image_batch):
+        """np_image_batch: shape (N,h,w,3) normalized [0,1]"""
         if self.model is None:
-            self.model = self.build_model()
-        
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-            loss='categorical_crossentropy',
-            metrics=['accuracy', 'precision', 'recall']
-        )
-        
-        return self.model
-    
-    def summary(self):
-        """Mostrar resumen del modelo"""
-        if self.model:
-            return self.model.summary()
-        else:
-            print("Model not built yet. Call build_model() first.")
+            raise ValueError("DL model not loaded")
+        #asegurar que la entrada está preprocesada
+        x = preprocess_input(np_image_batch * 255.0)
+        preds = self.model.predict(x, verbose=0)
+        return preds
 
-# Modelo especializado para detección en tiempo real
-class RealTimeSignModel:
-    def __init__(self, input_shape=(128, 128, 3), num_classes=26):
+
+class FeatureExtractor:
+    """Extract embeddings from MobileNetV2 base (global average pooled)."""
+    def __init__(self, input_shape=(224,224,3)):
         self.input_shape = input_shape
-        self.num_classes = num_classes
-        self.model = None
-    
-    def build_lightweight_model(self):
-        """Modelo liviano para inferencia en tiempo real"""
-        model = models.Sequential([
-            layers.Input(shape=self.input_shape),
-            
-            # Bloque 1
-            layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.2),
-            
-            # Bloque 2
-            layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.2),
-            
-            # Bloque 3
-            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-            layers.BatchNormalization(),
-            layers.MaxPooling2D((2, 2)),
-            layers.Dropout(0.2),
-            
-            # Clasificación
-            layers.GlobalAveragePooling2D(),
-            layers.Dense(128, activation='relu'),
-            layers.BatchNormalization(),
-            layers.Dropout(0.3),
-            layers.Dense(self.num_classes, activation='softmax')
-        ])
-        
-        return model
-    
-    def compile(self, learning_rate=0.001):
-        self.model = self.build_lightweight_model()
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-        return self.model
-    
+        self.base = MobileNetV2(weights='imagenet', include_top=False, input_shape=input_shape)
+        # We'll output GAP features
+        inp = self.base.input
+        x = self.base.output
+        x = layers.GlobalAveragePooling2D()(x)
+        self.model = models.Model(inputs=inp, outputs=x)
+
+    def extract(self, np_image_batch):
+        """Return 2D features array (N, features)"""
+        x = preprocess_input(np_image_batch * 255.0)
+        feats = self.model.predict(x, verbose=0)
+        return feats
+
+
+class MLClassifier:
+    """Wrapper to save/load sklearn classifier (RandomForest)"""
+    def __init__(self, model_path=None):
+        self.clf = None
+        if model_path:
+            self.load(model_path)
+
+    def fit(self, X, y):
+        from sklearn.ensemble import RandomForestClassifier
+        clf = RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)
+        clf.fit(X, y)
+        self.clf = clf
+        return clf
+
+    def predict_proba(self, X):
+        if self.clf is None:
+            raise ValueError("ML classifier not trained/loaded")
+        return self.clf.predict_proba(X)
+
+    def save(self, path):
+        joblib.dump(self.clf, path)
+
+    def load(self, path):
+        self.clf = joblib.load(path)
+        return self.clf
+
+
+# Utility helpers
+def load_class_names(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def preprocess_pil_image_bytes(image_bytes, target_size=(224,224)):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = img.resize(target_size)
+    arr = np.asarray(img).astype('float32') / 255.0
+    return arr  # shape (h,w,3)

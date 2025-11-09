@@ -1,64 +1,35 @@
-"""
-Script para generar un modelo de ejemplo si no tienes datos de entrenamiento
-"""
 import tensorflow as tf
-import numpy as np
-import json
-import os
+from tensorflow.keras import layers, models
+import os, json
 
-def create_sample_model():
-    """Crear un modelo de ejemplo pre-entrenado para pruebas"""
-    
-    # Clases de ejemplo (alfabeto de señas básico)
-    class_names = ['A', 'E', 'I', 'O', 'U']
-    
-    # Crear un modelo simple
-    model = tf.keras.Sequential([
-        tf.keras.layers.Input(shape=(128, 128, 3)),
-        tf.keras.layers.Conv2D(32, 3, activation='relu'),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Conv2D(64, 3, activation='relu'),
-        tf.keras.layers.MaxPooling2D(),
-        tf.keras.layers.Flatten(),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(len(class_names), activation='softmax')
-    ])
-    
-    # Compilar el modelo
-    model.compile(
-        optimizer='adam',
-        loss='categorical_crossentropy',
-        metrics=['accuracy']
-    )
-    
-    # Crear datos dummy para "entrenar" el modelo rápidamente
-    print("Creating sample model with dummy data...")
-    
-    # Generar datos de ejemplo
-    X_dummy = np.random.random((100, 128, 128, 3)).astype(np.float32)
-    y_dummy = tf.keras.utils.to_categorical(
-        np.random.randint(0, len(class_names), 100), 
-        len(class_names)
-    )
-    
-    # "Entrenamiento" rápido
-    model.fit(X_dummy, y_dummy, epochs=1, verbose=1)
-    
-    # Crear directorio si no existe
-    os.makedirs('model', exist_ok=True)
-    
-    # Guardar modelo
-    model.save('model/model.h5')
-    print("Sample model saved as model/model.h5")
-    
-    # Guardar nombres de clases
-    with open('model/class_names.json', 'w') as f:
-        json.dump(class_names, f, indent=2)
-    print("Class names saved as model/class_names.json")
-    
-    print("\n¡Modelo de ejemplo generado exitosamente!")
-    print("Puedes ejecutar el servidor FastAPI con: python main.py")
-    print("NOTA: Este es un modelo de ejemplo. Para mejor precisión, entrena con datos reales.")
+# Configuracion
+output_dir = "models/"
+os.makedirs(output_dir, exist_ok=True)
 
-if __name__ == "__main__":
-    create_sample_model()
+num_classes = 5
+img_size = (224, 224, 3)
+class_names = ['A', 'E', 'I', 'O', 'U']
+
+# Modelo simple
+model = models.Sequential([
+    layers.Input(shape=img_size),
+    layers.Conv2D(16, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Conv2D(32, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dropout(0.3),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.save(os.path.join(output_dir, "vowels_model.h5"))
+
+# Guardar clases
+with open(os.path.join(output_dir, "class_names.json"), "w") as f:
+    json.dump(class_names, f, indent=4)
+
+print("Modelo de muestra y clases generadas correctamente.")

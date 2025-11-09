@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 class ApiService {
-  static const String _baseUrl = 'http://192.168.0.17:8000'; // Cambia según tu red
+  static const String _baseUrl = 'http://192.168.0.17'; // Cambia según tu red
 
   /// Envía una imagen al backend y obtiene la predicción
   static Future<String?> sendImage(File imageFile) async {
