@@ -100,7 +100,7 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  /// 📤 Envía una imagen al servidor
+  //Envía una imagen al servidor
   Future<void> sendFrame(File file) async {
     try {
       var request = http.MultipartRequest(
