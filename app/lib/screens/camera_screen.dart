@@ -105,7 +105,7 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://192.168.0.17:8000/predict/'), // 🖥️ tu backend
+        Uri.parse('http://10.26.177.89:8000/predict/'), //tu backend
       );
 
       // ⚡️ Indicamos explícitamente que es una imagen JPEG
