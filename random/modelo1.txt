@@ -1,0 +1,535 @@
+# main.py
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import uvicorn, os, json, asyncio, numpy as np, cv2, joblib, logging
+from datetime import datetime
+from model import DLClassifier, FeatureExtractor, load_class_names
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("sign-translator")
+
+app = FastAPI(title="Sign Language Translator API (ensemble)", version="1.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model", "models")
+KERAS_MODEL = os.path.join(MODEL_DIR, "vowels_model.h5")
+ML_MODEL = os.path.join(MODEL_DIR, "ml_rf_joblib.pkl")
+CLASS_NAMES = os.path.join(MODEL_DIR, "class_names.json")
+
+dl = None
+fe = None
+ml = None
+class_names = []
+
+INPUT_SHAPE = (224,224,3)
+
+def load_models():
+    global dl, fe, ml, class_names
+    if not os.path.exists(KERAS_MODEL) or not os.path.exists(ML_MODEL) or not os.path.exists(CLASS_NAMES):
+        logger.error("Model files missing. Check model/models/ for artifacts.")
+        return False
+    dl = DLClassifier(model_path=KERAS_MODEL, input_shape=INPUT_SHAPE)
+    fe = FeatureExtractor(input_shape=INPUT_SHAPE)
+    ml = joblib.load(ML_MODEL)
+    with open(CLASS_NAMES, 'r', encoding='utf-8') as f:
+        class_names = json.load(f)
+    logger.info("Models loaded. Classes: %s", class_names)
+    return True
+
+@app.on_event("startup")
+async def startup():
+    ok = load_models()
+    if not ok:
+        logger.error("Models not loaded on startup.")
+
+def preprocess_cv_image(cv_img, target=(224,224)):
+    img = cv2.resize(cv_img, target)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    arr = img.astype('float32') / 255.0
+    return np.expand_dims(arr, axis=0)
+
+@app.post("/predict/")
+async def predict(file: UploadFile = File(...)):
+    try:
+        if dl is None or fe is None or ml is None:
+            raise HTTPException(status_code=503, detail="Model not ready")
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="Invalid file type")
+
+        data = await file.read()
+        nparr = np.frombuffer(data, np.uint8)
+        cv_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if cv_img is None:
+            raise HTTPException(status_code=400, detail="Could not decode image")
+
+        x = preprocess_cv_image(cv_img, target=(224,224))  # (1,224,224,3)
+
+        # DL probs
+        loop = asyncio.get_event_loop()
+        dl_probs = await loop.run_in_executor(None, dl.predict_proba, x)  # (1,C)
+
+        # ML probs: extract features
+        feat = fe.extract(x)  # (1,feat_dim)
+        ml_probs = ml.predict_proba(feat)
+
+        # ensemble average
+        # make sure shapes align (safety)
+        min_len = min(dl_probs.shape[1], ml_probs.shape[1])
+        dl_p = dl_probs[:, :min_len]
+        ml_p = ml_probs[:, :min_len]
+        ensemble = (dl_p + ml_p) / 2.0
+        idx = int(np.argmax(ensemble[0]))
+        conf = float(np.max(ensemble[0]))
+        label = class_names[idx] if idx < len(class_names) else f"Class_{idx}"
+
+        logger.info("Prediction: %s (%.3f)", label, conf)
+        return JSONResponse({"prediction": label, "confidence": round(conf,4), "timestamp": datetime.now().isoformat()})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error in predict")
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+# model/train_model.py
+import os, re, json, numpy as np
+from datetime import datetime
+from PIL import Image
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.utils import class_weight
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+
+from .model import DLClassifier, FeatureExtractor, MLClassifier, load_class_names
+import joblib
+
+#Directorios
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAIN_DIR = os.path.join(BASE_DIR, "../dataset/train/")
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+EVAL_ROOT = os.path.join(BASE_DIR, "evaluacion")
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(EVAL_ROOT, exist_ok=True)
+
+#Limpiar imágenes inválidas o corruptas
+def limpiar_imagenes_invalidas(base_dir):
+    print(f"Verificando imágenes en {base_dir} ...")
+    for root, _, files in os.walk(base_dir):
+        for file in files:
+            path = os.path.join(root, file)
+            nuevo = re.sub(r'[^a-zA-Z0-9_.-]', '_', file)
+            if len(nuevo) > 60:
+                base, ext = os.path.splitext(nuevo)
+                nuevo = base[:50] + ext
+            nuevo_path = os.path.join(root, nuevo)
+            if path != nuevo_path:
+                os.rename(path, nuevo_path)
+                path = nuevo_path
+            try:
+                with Image.open(path) as img:
+                    img.verify()
+            except Exception:
+                print("Imagen inválida:", path)
+                os.remove(path)
+    print("Limpieza completada.")
+
+limpiar_imagenes_invalidas(TRAIN_DIR)
+
+# Generadores de datos
+IMG_SIZE = (224, 224)
+BATCH = 16
+datagen = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=25,
+    width_shift_range=0.15,
+    height_shift_range=0.15,
+    zoom_range=0.2,
+    shear_range=0.1,
+    brightness_range=(0.75, 1.25),
+    horizontal_flip=True,
+    validation_split=0.2
+)
+
+train_gen = datagen.flow_from_directory(
+    TRAIN_DIR,
+    target_size=IMG_SIZE,
+    batch_size=BATCH,
+    class_mode='categorical',
+    subset='training',
+    shuffle=True
+)
+
+val_gen = datagen.flow_from_directory(
+    TRAIN_DIR,
+    target_size=IMG_SIZE,
+    batch_size=BATCH,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=False
+)
+
+class_names = list(train_gen.class_indices.keys())
+num_classes = len(class_names)
+
+#Generar y entrenar modelo DL
+dl = DLClassifier()
+model = dl.build(num_classes, base_trainable=False)
+
+# Callbacks
+checkpoint_path = os.path.join(MODEL_DIR, "vowels_model_best.h5")
+checkpoint = ModelCheckpoint(checkpoint_path, monitor='val_accuracy', save_best_only=True, verbose=1)
+early = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True, verbose=1)
+reduce = ReduceLROnPlateau(monitor='val_loss', factor=0.3, patience=4, min_lr=1e-6, verbose=1)
+
+# Class weights
+weights = class_weight.compute_class_weight('balanced', classes=np.unique(train_gen.classes), y=train_gen.classes)
+cw = dict(enumerate(weights))
+
+# Train
+history = model.fit(
+    train_gen,
+    validation_data=val_gen,
+    epochs=40,
+    callbacks=[checkpoint, early, reduce],
+    class_weight=cw,
+    verbose=1
+)
+
+# Save final Keras model
+final_keras_path = os.path.join(MODEL_DIR, "vowels_model.h5")
+model.save(final_keras_path)
+
+# Save class names
+with open(os.path.join(MODEL_DIR, "class_names.json"), "w", encoding='utf-8') as f:
+    json.dump(class_names, f, ensure_ascii=False, indent=2)
+
+print("DL model saved:", final_keras_path)
+
+#Extraer características y entrenar modelo ML
+fe = FeatureExtractor()
+datagen_plain = ImageDataGenerator(rescale=1./255)
+full_gen = datagen_plain.flow_from_directory(
+    TRAIN_DIR, target_size=IMG_SIZE, batch_size=BATCH, class_mode='categorical', shuffle=False
+)
+
+full_gen.reset()
+feats = []
+labels = []
+steps = int(np.ceil(full_gen.samples / full_gen.batch_size))
+for i in range(steps):
+    xbatch, ybatch = next(full_gen)
+    f = fe.extract(xbatch)
+    feats.append(f)
+    labels.append(np.argmax(ybatch, axis=1))
+X = np.vstack(feats)
+y = np.concatenate(labels)
+
+print("Features shape:", X.shape, "Labels shape:", y.shape)
+
+# Train ML classifier
+ml = MLClassifier()
+ml.fit(X, y)
+ml_path = os.path.join(MODEL_DIR, "ml_rf_joblib.pkl")
+ml.save(ml_path)
+print("ML model saved:", ml_path)
+
+# Evaluación conjunta DL + ML
+val_plain = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+val_gen2 = val_plain.flow_from_directory(
+    TRAIN_DIR,
+    target_size=IMG_SIZE,
+    batch_size=BATCH,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=False
+)
+
+val_gen2.reset()
+dl_preds = model.predict(val_gen2, verbose=1)
+
+# Extract validation features
+val_gen2.reset()
+feats_val = []
+y_val = []
+steps_val = int(np.ceil(val_gen2.samples / val_gen2.batch_size))
+for i in range(steps_val):
+    xb, yb = next(val_gen2)
+    feats_val.append(fe.extract(xb))
+    y_val.append(np.argmax(yb, axis=1))
+Xval = np.vstack(feats_val)
+ytrue = np.concatenate(y_val)
+
+# ML predictions
+ml_probs = ml.predict_proba(Xval)
+
+# Ensemble: average probabilities
+ensemble_probs = (dl_preds[:len(ml_probs)] + ml_probs) / 2.0
+ypred = np.argmax(ensemble_probs, axis=1)
+
+# Confusion matrix and report
+cm = confusion_matrix(ytrue, ypred)
+report = classification_report(ytrue, ypred, target_names=class_names, output_dict=True)
+print("Classification report (ensemble):")
+print(classification_report(ytrue, ypred, target_names=class_names))
+
+# Guardar artefactos de evaluación
+fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+evdir = os.path.join(EVAL_ROOT, f"evaluacion_{fecha}")
+os.makedirs(evdir, exist_ok=True)
+
+plt.figure(figsize=(6,6))
+sns.heatmap(cm, annot=True, fmt='d', xticklabels=class_names, yticklabels=class_names, cmap='Blues')
+plt.title("Confusion matrix (ensemble)")
+plt.savefig(os.path.join(evdir, "confusion_matrix.png"))
+plt.close()
+
+plt.figure()
+plt.plot(history.history.get('accuracy', []), label='train_acc')
+plt.plot(history.history.get('val_accuracy', []), label='val_acc')
+plt.legend(); plt.title("Accuracy")
+plt.savefig(os.path.join(evdir, "accuracy.png")); plt.close()
+
+plt.figure()
+plt.plot(history.history.get('loss', []), label='train_loss')
+plt.plot(history.history.get('val_loss', []), label='val_loss')
+plt.legend(); plt.title("Loss")
+plt.savefig(os.path.join(evdir, "loss.png")); plt.close()
+
+with open(os.path.join(evdir, "classification_report.json"), "w", encoding='utf-8') as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+
+print("Evaluation saved in", evdir)
+print("All done.")
+
+# model/statistics_model.py
+import os, json
+from datetime import datetime
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from sklearn.metrics import confusion_matrix, classification_report
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from model import DLClassifier, FeatureExtractor
+import joblib
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "models")
+EVAL_ROOT = os.path.join(BASE_DIR, "evaluacion")
+os.makedirs(EVAL_ROOT, exist_ok=True)
+
+def run_evaluation(keras_model_path=None, ml_model_path=None, dataset_dir="../dataset/train/"):
+    if keras_model_path is None:
+        keras_model_path = os.path.join(MODEL_DIR, "vowels_model.h5")
+    if ml_model_path is None:
+        ml_model_path = os.path.join(MODEL_DIR, "ml_rf_joblib.pkl")
+
+    dl = DLClassifier(model_path=keras_model_path)
+    fe = FeatureExtractor()
+    ml = joblib.load(ml_model_path)
+
+    datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+    val_gen = datagen.flow_from_directory(
+        os.path.join(BASE_DIR, dataset_dir),
+        target_size=(224,224),
+        batch_size=16,
+        class_mode='categorical',
+        subset='validation',
+        shuffle=False
+    )
+
+    # Predictions
+    val_gen.reset()
+    dl_preds = dl.model.predict(val_gen, verbose=1)
+    # ML features
+    val_gen.reset()
+    feats = []
+    y = []
+    steps = int(np.ceil(val_gen.samples / val_gen.batch_size))
+    for i in range(steps):
+        xb, yb = next(val_gen)
+        feats.append(fe.extract(xb))
+        y.append(np.argmax(yb, axis=1))
+    Xval = np.vstack(feats)
+    ytrue = np.concatenate(y)
+    ml_probs = ml.predict_proba(Xval)
+
+    # Ensemble:
+    probs = (dl_preds[:len(ml_probs)] + ml_probs) / 2.0
+    ypred = np.argmax(probs, axis=1)
+
+    # Metrics + save
+    cm = confusion_matrix(ytrue, ypred)
+    report = classification_report(ytrue, ypred, output_dict=True)
+    fecha = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    outdir = os.path.join(EVAL_ROOT, f"evaluacion_{fecha}")
+    os.makedirs(outdir, exist_ok=True)
+
+    # save report
+    with open(os.path.join(outdir, "classification_report.json"), "w", encoding='utf-8') as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+
+    plt.figure(figsize=(6,6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title("Matriz de Confusión (ensemble)")
+    plt.savefig(os.path.join(outdir, "confusion_matrix.png"))
+    plt.close()
+
+    print("Saved evaluation to", outdir)
+    return outdir, report
+
+if __name__ == "__main__":
+    run_evaluation()
+
+# model/model.py
+import os
+import json
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.preprocessing import image as kimage
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from PIL import Image
+import io
+import joblib
+
+class DLClassifier:
+    """Deep learning classifier using MobileNetV2 base + head."""
+    def __init__(self, model_path=None, input_shape=(224,224,3)):
+        self.input_shape = input_shape
+        self.model = None
+        if model_path:
+            self.load(model_path)
+
+    def build(self, num_classes, base_trainable=False):
+        base = MobileNetV2(weights='imagenet', include_top=False, input_shape=self.input_shape)
+        base.trainable = base_trainable
+        x = base.output
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dense(256, activation='relu')(x)
+        x = layers.Dropout(0.4)(x)
+        out = layers.Dense(num_classes, activation='softmax')(x)
+        model = models.Model(inputs=base.input, outputs=out)
+        model.compile(optimizer=tf.keras.optimizers.Adam(1e-4),
+                      loss='categorical_crossentropy',
+                      metrics=['accuracy'])
+        self.model = model
+        self._base = base
+        return model
+
+    def load(self, model_path):
+        self.model = tf.keras.models.load_model(model_path)
+        return self.model
+
+    def predict_proba(self, np_image_batch):
+        """np_image_batch: shape (N,h,w,3) normalized [0,1]"""
+        if self.model is None:
+            raise ValueError("DL model not loaded")
+        #asegurar que la entrada está preprocesada
+        x = preprocess_input(np_image_batch * 255.0)
+        preds = self.model.predict(x, verbose=0)
+        return preds
+
+
+class FeatureExtractor:
+    """Extract embeddings from MobileNetV2 base (global average pooled)."""
+    def __init__(self, input_shape=(224,224,3)):
+        self.input_shape = input_shape
+        self.base = MobileNetV2(weights='imagenet', include_top=False, input_shape=input_shape)
+        # We'll output GAP features
+        inp = self.base.input
+        x = self.base.output
+        x = layers.GlobalAveragePooling2D()(x)
+        self.model = models.Model(inputs=inp, outputs=x)
+
+    def extract(self, np_image_batch):
+        """Return 2D features array (N, features)"""
+        x = preprocess_input(np_image_batch * 255.0)
+        feats = self.model.predict(x, verbose=0)
+        return feats
+
+
+class MLClassifier:
+    """Wrapper to save/load sklearn classifier (RandomForest)"""
+    def __init__(self, model_path=None):
+        self.clf = None
+        if model_path:
+            self.load(model_path)
+
+    def fit(self, X, y):
+        from sklearn.ensemble import RandomForestClassifier
+        clf = RandomForestClassifier(n_estimators=200, n_jobs=-1, random_state=42)
+        clf.fit(X, y)
+        self.clf = clf
+        return clf
+
+    def predict_proba(self, X):
+        if self.clf is None:
+            raise ValueError("ML classifier not trained/loaded")
+        return self.clf.predict_proba(X)
+
+    def save(self, path):
+        joblib.dump(self.clf, path)
+
+    def load(self, path):
+        self.clf = joblib.load(path)
+        return self.clf
+
+
+# Utility helpers
+def load_class_names(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def preprocess_pil_image_bytes(image_bytes, target_size=(224,224)):
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = img.resize(target_size)
+    arr = np.asarray(img).astype('float32') / 255.0
+    return arr  # shape (h,w,3)
+
+import tensorflow as tf
+from tensorflow.keras import layers, models
+import os, json
+
+# Configuracion
+output_dir = "models/"
+os.makedirs(output_dir, exist_ok=True)
+
+num_classes = 5
+img_size = (224, 224, 3)
+class_names = ['A', 'E', 'I', 'O', 'U']
+
+# Modelo simple
+model = models.Sequential([
+    layers.Input(shape=img_size),
+    layers.Conv2D(16, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Conv2D(32, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dropout(0.3),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.save(os.path.join(output_dir, "vowels_model.h5"))
+
+# Guardar clases
+with open(os.path.join(output_dir, "class_names.json"), "w") as f:
+    json.dump(class_names, f, indent=4)
+
+print("Modelo de muestra y clases generadas correctamente.")
+
+from .model import DLClassifier, FeatureExtractor, MLClassifier
+from .train_model import load_class_names
+
+__all__ = ["DLClassifier", "FeatureExtractor", "MLClassifier", "load_class_names"]
